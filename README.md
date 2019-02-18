@@ -25,21 +25,27 @@ All the copyright for the different components used resides with the creators of
 Docker is used to provide multiple containers to run the different components of this setup. Docker is therefore a prerequist, as well as Docker Compose which is used to configure the multiple containers as well as orchestrate them. The installation has been tested on Digital Ocean using a pre-built Docker droplet. Docker-Compose were installed manually after droplet setup and configuration.
 
 For more details please consult the following websites for more information:
-[Docker](https://www.docker.com/)
-[Docker-Compose](https://docs.docker.com/compose/)
-[Digital Ocean Docker Droplet](https://www.digitalocean.com/products/one-click-apps/docker/)
+* [Docker](https://www.docker.com/)
+* [Docker-Compose](https://docs.docker.com/compose/)
+* [Digital Ocean Docker Droplet](https://www.digitalocean.com/products/one-click-apps/docker/)
 
 #### Below the Docker Compose explanation:
 The first part starts NGINX as reverse proxy. The details of the NGINX implementation follows below. The NGINX configuration is stored outside the instance for ease of manipulation. In future the certificates for SSL implementation will also be stored outside the container. This allows a separate process to request new certificates before the instance is restarted to make the new configuration or certificates valid.
+
 ```code snippet```
-To Do
-	• Certificates must be added for the SSL implementation.
-	• At the moment the NGINX configuration file stores all the information for all the instances. This should be broken into separate files and stored in the 'Sites Available' and 'Site Enabled' folders. This would decrease the complexity involved in maintaining the NGINX implementation.
-The second part starts all the Node-Red instances. Each Node-Red instance has its own storage and the volumes are defined at the end of the Docker Compose file. The current Docker Compose file uses the standard Node-Red instance from Docker Hub, however, this will be changed to use a custom image. The custom image will include a couple of additional nodes, especially the Dashboard nodes, the Worldmap node and will be configured to use projects from the start. Github may be included to store the Node-Red projects. 
+
+##### To Do
+* Certificates must be added for the SSL implementation.
+* At the moment the NGINX configuration file stores all the information for all the instances. This should be broken into separate files and stored in the 'Sites Available' and 'Site Enabled' folders. This would decrease the complexity involved in maintaining the NGINX implementation.
+
+The second part starts all the Node-Red instances. Each Node-Red instance has its own storage and the volumes are defined at the end of the Docker Compose file. The current Docker Compose file uses the standard Node-Red instance from Docker Hub, however, this will be changed to use a custom image. The custom image will include a couple of additional nodes, especially the Dashboard nodes, the Worldmap node and will be configured to use projects from the start. Github may be included to store the Node-Red projects.
+
 The third part defines the internal network used between the docker containers to communicate with one another. This is especially important for the communication between the reverse proxy and the containers. 
 
 ### Node-Red
 Node-Red is flow based programming tool with an infinite number of applications. Node-Red Dashboard provides a set of nodes to easily create dashboards and user interfaces. However, the Node-Red dashboard is inherently a single user setup. The only way to provide multiple user capabilities is to run numerous Node-Red instances. Each instance has its own dashboard. In addition to the standard Node-Red Dashboard the setup also includes Node-Red Worldmap to provide each instance the capability to plot items on a map.
+
+Each Node-Red container provides a single Node-Red instance. In the rest of this readme Node-Red instances refers to a Node-Red container.
 
 ### NGINX
 NGINX had two main purposes. 
@@ -48,8 +54,25 @@ The first purpose is to act as a reverse proxy. The reverse proxy provides a wel
 
 Note the difference between the route to the UI and the Worldmap, and the route to the standard Node-Red Admin interface. This difference will be explained shortly.
 
-The second purpose is to control access to the instances. Every time a specific route is accessed, as per the reverse proxy implementation, the access is authenticated. NGINX does this by passing every incoming message to the authentication route. The authentication route checks the credentials and allows/denies access. 
-The current implementation works as follow:
-1. When a user attempt to access their instance the request is sent to the authentication route. The authentication route checks the credentials and replies with a HTTP 200 response if access is allowed or a HTTP 401 response of if denied. If it is the first time the user requests access it will be denied and the user will be redirected to the login page.
-1. On the login page the user is required to enter their username and password. 
+The second purpose is to control access to the instances. Every time a specific route is accessed, as per the reverse proxy implementation, the access is authenticated. NGINX does this by passing every incoming message to the authentication route. The authentication route checks the credentials and allows/denies access.
 
+The current implementation works as explained below. It does have some issues and security concerns which will be adressed in future:
+1. When a user attempt to access their instance the request is sent to the authentication route. The authentication route checks the credentials and replies with a HTTP 200 response if access is allowed or a HTTP 401 response of if denied. If it is the first time the user requests access it will be denied and the user will be redirected to the login page.
+1. On the login page the user is required to enter their username and password. The username is used to retrieve the instance ID which belongs to the user. The username, password, instance ID and a time stamp is then compiled into a single message. This message is then encrypted using BCRYPT and loaded into a cookie. The cookie is sent back to the user's browser and the user is redirected to their instance. The cookie contains three items.
+   1. The value field, which contains the username, password, Instance ID and time stamp.
+   1. The max age, which defines the expiry date of the cookie.
+   1. The path, which defines where the cookie is valid. 
+      * The path of the user instance id is defined as '/100001/ui' and '/100001/worldmap'
+      * The cookie is set to access the '/100001/' path. This allows the cookie to be valid for both the ui and the worldmap URI's.
+      * For the admin interface the reverse proxy defines the require path as '/admin/'. This allows a admin user, which usaully has the most power, to access all the different Node-Red admin interfaces with a single login and cookie. All the admin interfaces are available on '/admin/100001/', '/admin/100002/' etc.
+1. The reverse proxy receives the request from the user's browser to access their instance. The previously generated cookie is sent with. The reverse proxy request the authentication route to verify the login information before allowing access. The cookie is decrypted to obtain the username and password of the user. The username is used to retrieve the password from the database. The password is first decrypted as it is stored encrypted in the database, and then compared to the provided password. If the two passwords match the authentication route responds with an HTTP 200 result. If anything in this process fails or if the password is incorrect the authetication route responds with an HTTP 401 result.
+1. If a HTTP 200 result is received the reverse proxy redirects the user as per the path defined in the cookie. This basically allows the user access to their dashboard.
+1. If a HTTP 401 result is received the user is directed back to the login screen.
+
+The login page is provided by Node-Red instance 0. Node-Red instance 0 also provides the login screen for the admin interface.
+
+The authentication route is provided by Node-Red instance 1. This instance will be exteremly busy when many users connect to their instances. In this setup the authentication route queries the database everytime it receives a authentication request. This is inefficient and the should probably be changed to load the complete user database into memory if possible. This has not been stress tested at all.
+
+##### To Do
+* Change the authentication route to load the complete user database into memory
+* Investigate JWT to provide access in place of storing a cookie with the both the username and password
